@@ -4,22 +4,174 @@ output:
   html_document:
     keep_md: true
 ---
-
+### Analysis of an individual's activity monitoring data 
 
 ## Loading and preprocessing the data
 
+> Show any code that is needed to
+> 
+> 1. Load the data (i.e. read.csv())
+> 
+> 1. Process/transform the data (if necessary) into a format suitable for your analysis
+
+The following code will unzip the data file (if neccesary), read it in to memory, and place the data into a dplyr data frame table.
+
+We may not need it, but for now let's also put the date column into datetime format with lubridate.
+
+```{r}
+library(dplyr, warn.conflicts = FALSE)
+library(lubridate)
+
+filename="activity.csv"
+if(!file.exists(filename)) {
+    unzip("activity.zip")
+}
+if(!file.exists(filename)) {
+    stop("Cannot find ",filename," file")
+}
+
+activity <- read.csv("activity.csv")
+
+activity <- tbl_df(activity) %>%
+    transmute(steps, date = ymd(date), interval)
+
+summary(activity)
+```
+
+&nbsp;  <!-- I need more space here than markdown will give me by default! -->
 
 
-## What is mean total number of steps taken per day?
+## What is the mean total number of steps taken per day?
 
+> For this part of the assignment, you can ignore the missing values in the dataset.
+>
+> 1. Calculate the total number of steps taken per day
+> 
+> 1. Make a histogram of the total number of steps taken each day
+> 
+> 1. Calculate and report the mean and median of the total number of steps taken per day
+  
+Now we'll create a table that sums up the number of steps per day.  dplyr makes this very easy.
+
+We won't removing the missing values in the dataset at this stage, as it makes it impossible to distinguish between days when we don't have data, and days when the subject appears to have stayed completely stationary.
+
+```{r}
+dailysummary <- activity %>%
+                group_by(date) %>%
+                summarize(steps = sum(steps))
+
+head(dailysummary,3)
+```
+
+
+We'll now create a histogram[^hist] of the number of steps taken per day.  This shows us that the number of steps per day generally resembles a bell curve, with the mean lying just above the 10,000 steps mark -- however, there are at least a couple of days where it would appear that the subject did not move at all.  (Though perhaps, charitabily, we can assume that the subject left their step-measuring device behind for a day.)
+
+```{r}
+with(dailysummary, hist(steps,30))
+```
+
+Finally, we can see that the mean and median number of steps are nearly identical:
+
+```{r}
+cat(paste("Mean steps per day:",format(mean(dailysummary$steps, na.rm = TRUE), digits=7),
+          "and the median value is",median(dailysummary$steps, na.rm = TRUE)))
+```
+
+[^hist]: I tend to prefer ggplot2 graphs, but the base plot system seems to have the cleanest histograms, at least by default.
+
+&nbsp;  <!-- I need more space here than markdown will give me by default! -->
 
 
 ## What is the average daily activity pattern?
 
+> 1. Make a time series plot (i.e. type = "l") of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all days (y-axis)
+> 1. Which 5-minute interval, on average across all the days in the dataset, contains the maximum number of steps?
+
+There may be a way to do this directly via qplot() or ggplot() arguments, but let's keep things simple and make ourselves another summary table.  With this table, creating the time series plot is easy.
+
+```{r}
+intervalsummary <- activity %>% group_by(interval) %>% summarize(steps = mean(steps, na.rm = TRUE))
+# with(intervalsummary, plot(interval, steps, type = "l"))
+
+library(ggplot2)
+qplot(interval, steps, geom = "line", data = intervalsummary)
+```
+
+The following code shows us that the individual averages the most steps during the interval corresponding to 8:35 in the morning.
+
+```{r}
+filter(intervalsummary, steps == max(steps))
+```
+
+&nbsp;  <!-- I need more space here than markdown will give me by default! -->
 
 
 ## Imputing missing values
+> Note that there are a number of days/intervals where there are missing values (coded as NA). The presence of missing days may introduce bias into some calculations or summaries of the data.
+>
+> 1. Calculate and report the total number of missing values in the dataset (i.e. the total number of rows with NAs)
+> 1. Devise a strategy for filling in all of the missing values in the dataset. The strategy does not need to be sophisticated. For example, you could use the mean/median for that day, or the mean for that 5-minute interval, etc.
+> 1. Create a new dataset that is equal to the original dataset but with the missing data filled in.
+> 1. Make a histogram of the total number of steps taken each day and Calculate and report the mean and median total number of steps taken per day. Do these values differ from the estimates from the first part of the assignment? What is the impact of imputing missing data on the estimates of the total daily number of steps?
 
+missing <- nrow(filter(activity, is.na(steps)))
+missingpercentage <- format((missing / nrow(activity)) * 100, digits = 4)
+cat(paste("There are", missing, "rows in the table, representing", missingpercentage, "percent of the total rows"))
+
+The easiest & most reasonable strategy, to my mind, is to fill any missing interval with the mean for the appropriate 5-minute interval.  However, it takes a bit of the fun out of divising if that strategy is drectly in the question.  A second-order approximation would combine the two suggestions, using any data available for a day with missing values to help compute an appropriate in-fill value.
+
+i.e. if the NA value is at 8:35am, we want to insert the average number of steps (206) if it otherwise looks like the subject was having an average day.  If indications are that the subject's activity was 50% of normal, we should insert 103 steps instead.  Our indicator of activity during a day with missing values cannot be a simple average of the present values, unless you are comparing that average with other days with missing values during the same intervals.
+
+So let's go whole hog here, and use the following algorithm:
+
+1. mean_daily_activity = sum of all the steps in the intervalsummary table we computed earlier.
+
+1. to compute the activity level of a given day:
+
+    1. create a vector of boolean values, indicating which intervals in the day were NA (FALSE) and which were not (TRUE)
+   
+    2. compute a sum of activity in the given day, omitting NA values
+   
+    3. use the vector from step #1 to extract only the values from the intervalsummary table that correspond to non-NA values in the day in question
+   
+    4. compute a sum of activity from the values in step #3
+   
+    5. divide the sum in step #2 (this day's activity level) by the value in step #4 (the average activity value if missing data in the same places as this day) -- this value represents the percentage of activity of the day under consideration compared to an average day
+   
+1. for each NA value in the given day, insert the corresponding value from the same interval in the intervalsummary table, multiplied by the percentage-activity level for the day
+
+Unwrapping this slightly, what we'll do is:
+* Create a function to compute the activity_level_percentage of a day
+* Create and populate a new table with columns date and activity_level_percentage
+* Create a new table that replaces any NA from activity with activity_level_percentage(for the date) * average steps for the interval
+
+```{r}
+compute_activity_level <- function(date) {
+    na_mask <- filter(activity, date == ymd(date)) %>%
+               select(steps) %>%
+               is.na %>%
+               as.vector
+    if (all(na_mask)) {
+        # all values are NA, so in the absence of any other information, assume activity is average
+        # return 1 -- or something
+    }
+    # more code here    
+}
+```
+
+Great.  All that thinking, and then I realize that there are no days with a partial set of NA values -- either all values for a day are NA, or none are.
+
+all values for a day are NA, or none are.
+
+activity %>% transform(na = is.na(steps)) %>% group_by(date) %>% summarize(nas = sum(na)) %>% arrange(nas)
+
+So now I'm going to give up and go back to the average, though the next section makes me think perhaps I should be basing it on the average for the day of the week.  Let's do a quick graph to tell us what that looks like
+
+dt <- qplot(as.Date(date), steps, geom = "line", data = dailysummary)
+
+dt + scale_x_date(breaks = "1 week")
+
+Nothing very discernable here.  Go back to average I guess.
 
 
 ## Are there differences in activity patterns between weekdays and weekends?
