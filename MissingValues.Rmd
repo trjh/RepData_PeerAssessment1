@@ -1,0 +1,72 @@
+---
+title: "Thoughts on NA fill-in algorithms"
+output: 
+  html_document:
+    keep_md: true
+---
+## Imputing missing values
+> Note that there are a number of days/intervals where there are missing values (coded as NA). The presence of missing days may introduce bias into some calculations or summaries of the data.
+>
+> 1. Calculate and report the total number of missing values in the dataset (i.e. the total number of rows with NAs)
+> 1. Devise a strategy for filling in all of the missing values in the dataset. The strategy does not need to be sophisticated. For example, you could use the mean/median for that day, or the mean for that 5-minute interval, etc.
+> 1. Create a new dataset that is equal to the original dataset but with the missing data filled in.
+> 1. Make a histogram of the total number of steps taken each day and Calculate and report the mean and median total number of steps taken per day. Do these values differ from the estimates from the first part of the assignment? What is the impact of imputing missing data on the estimates of the total daily number of steps?
+
+missing <- nrow(filter(activity, is.na(steps)))
+missingpercentage <- format((missing / nrow(activity)) * 100, digits = 4)
+cat(paste("There are", missing, "rows in the table, representing", missingpercentage, "percent of the total rows"))
+
+The easiest & most reasonable strategy, to my mind, is to fill any missing interval with the mean for the appropriate 5-minute interval.  However, it takes a bit of the fun out of divising if that strategy is drectly in the question.  A second-order approximation would combine the two suggestions, using any data available for a day with missing values to help compute an appropriate in-fill value.
+
+i.e. if the NA value is at 8:35am, we want to insert the average number of steps (206) if it otherwise looks like the subject was having an average day.  If indications are that the subject's activity was 50% of normal, we should insert 103 steps instead.  Our indicator of activity during a day with missing values cannot be a simple average of the present values, unless you are comparing that average with other days with missing values during the same intervals.
+
+So let's go whole hog here, and use the following algorithm:
+
+1. mean_daily_activity = sum of all the steps in the intervalsummary table we computed earlier.
+
+1. to compute the activity level of a given day:
+
+    1. create a vector of boolean values, indicating which intervals in the day were NA (FALSE) and which were not (TRUE)
+   
+    2. compute a sum of activity in the given day, omitting NA values
+   
+    3. use the vector from step #1 to extract only the values from the intervalsummary table that correspond to non-NA values in the day in question
+   
+    4. compute a sum of activity from the values in step #3
+   
+    5. divide the sum in step #2 (this day's activity level) by the value in step #4 (the average activity value if missing data in the same places as this day) -- this value represents the percentage of activity of the day under consideration compared to an average day
+   
+1. for each NA value in the given day, insert the corresponding value from the same interval in the intervalsummary table, multiplied by the percentage-activity level for the day
+
+Unwrapping this slightly, what we'll do is:
+* Create a function to compute the activity_level_percentage of a day
+* Create and populate a new table with columns date and activity_level_percentage
+* Create a new table that replaces any NA from activity with activity_level_percentage(for the date) * average steps for the interval
+
+```{r}
+compute_activity_level <- function(date) {
+    na_mask <- filter(activity, date == ymd(date)) %>%
+               select(steps) %>%
+               is.na %>%
+               as.vector
+    if (all(na_mask)) {
+        # all values are NA, so in the absence of any other information, assume activity is average
+        # return 1 -- or something
+    }
+    # more code here    
+}
+```
+
+Great.  All that thinking, and then I realize that there are no days with a partial set of NA values -- either all values for a day are NA, or none are.
+
+all values for a day are NA, or none are.
+
+activity %>% transform(na = is.na(steps)) %>% group_by(date) %>% summarize(nas = sum(na)) %>% arrange(nas)
+
+So now I'm going to give up and go back to the average, though the next section makes me think perhaps I should be basing it on the average for the day of the week.  Let's do a quick graph to tell us what that looks like
+
+dt <- qplot(as.Date(date), steps, geom = "line", data = dailysummary)
+
+dt + scale_x_date(breaks = "1 week")
+
+Nothing very discernable here.  Go back to average I guess.
