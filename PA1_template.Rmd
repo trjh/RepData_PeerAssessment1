@@ -244,7 +244,7 @@ dim(results) <- c(2,2)
 rownames(results) <- c("orig data", "infilled data")
 colnames(results) <- c("mean", "median")
 library(xtable)
-print(xtable(results), type = "html")
+print(xtable(results, digits=7, center=c("r","r")), type = "html")
 ```
 
 *** Do these values differ from the estimates from the first part of the assignment?
