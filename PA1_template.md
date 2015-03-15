@@ -1,4 +1,9 @@
-# Reproducible Research: Peer Assessment 1
+---
+title: "Reproducible Research: Peer Assessment 1"
+output: 
+  html_document:
+    keep_md: true
+---
 ### Analysis of an individual's activity monitoring data 
 
 <!-- note to self: http://rmarkdown.rstudio.com/
@@ -126,7 +131,7 @@ left their step-measuring device behind for a day.)
 with(dailysummary, hist(steps,30,main = "Histogram of Steps per Day"))
 ```
 
-![](PA1_template_files/figure-html/dailysummary_hist-1.png) 
+![plot of chunk dailysummary_hist](figure/dailysummary_hist-1.png) 
 
 Finally, we can see that the mean and median number of steps are nearly identical:
 
@@ -164,7 +169,7 @@ intervalsummary <- activity %>%
 qplot(interval, meansteps, geom = "line", data = intervalsummary)
 ```
 
-![](PA1_template_files/figure-html/intervalsummary-1.png) 
+![plot of chunk intervalsummary](figure/intervalsummary-1.png) 
 
 The following code shows us that the individual averages the most steps during the interval corresponding to 8:35 in the morning.
 
@@ -338,7 +343,7 @@ ndailysummary <- newactivity %>%
 with(ndailysummary, hist(steps,30))
 ```
 
-![](PA1_template_files/figure-html/interpolate1_effects-1.png) 
+![plot of chunk interpolate1_effects](figure/interpolate1_effects-1.png) 
 
 ```r
 nmeandaily_steps   <- mean(ndailysummary$steps, na.rm = TRUE)
@@ -353,7 +358,7 @@ print(xtable(results, center=c("r","r")), type = "html", html.table.attributes="
 ```
 
 <!-- html table generated in R 3.1.2 by xtable 1.7-4 package -->
-<!-- Sun Mar 15 14:54:46 2015 -->
+<!-- Sun Mar 15 15:03:37 2015 -->
 <table border=0>
 <tr> <th>  </th> <th> mean </th> <th> median </th>  </tr>
   <tr> <td align="right"> orig data </td> <td align="right"> 10766.19 </td> <td align="right"> 10765.64 </td> </tr>
@@ -380,7 +385,7 @@ with(ndailysummary, hist(steps,30, ylim = c(0,20), main=""))
 mtext("Comparing histograms of original and imputed data", outer = TRUE)
 ```
 
-![](PA1_template_files/figure-html/interpolate1_figure2-1.png) 
+![plot of chunk interpolate1_figure2](figure/interpolate1_figure2-1.png) 
 
 &nbsp;  <!-- I need more space here than markdown will give me by default! -->
 
@@ -443,7 +448,7 @@ plot <- ggplot(interval_dt_summary, aes(interval, meansteps)) +
 print(plot)
 ```
 
-![](PA1_template_files/figure-html/splitweekday_plot-1.png) 
+![plot of chunk splitweekday_plot](figure/splitweekday_plot-1.png) 
 
 ## Notes
 I'd like to do a better imputation -- something that makes the histogram of the new dataset look more like the histogram of the original data set.  I think I can do this by combining an assumption that the activity of a missing day is relatively proportional to the activity of the days preceeding and following it, and by noticing that the original histogram corresponds to a bell curve.  The latter implies to me that I can use the Normal distribution functions to create random values for the missing intervals using rnorm().
@@ -466,4 +471,4 @@ print(dt + scale_x_date(breaks = "1 week"))
 ## Warning: Removed 8 rows containing missing values (geom_point).
 ```
 
-![](PA1_template_files/figure-html/timeseries_mean_daily_steps-1.png) 
+![plot of chunk timeseries_mean_daily_steps](figure/timeseries_mean_daily_steps-1.png) 
