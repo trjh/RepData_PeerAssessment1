@@ -6,25 +6,6 @@ output:
 ---
 ### Analysis of an individual's activity monitoring data 
 
-<!-- note to self: http://rmarkdown.rstudio.com/
-    If you are not using RStudio then you simply need to call the
-    rmarkdown::render function, for example:
-
-    rmarkdown::render("input.Rmd")
-
-    Note that in the case using the "Knit" button in RStudio the basic
-    mechanism is the same (RStudio calls the rmarkdown::render function under
-    the hood)
-
-    ...but this requires pandoc:
-    > rmarkdown::render("PA1_template.Rmd")
-    Error: pandoc version 1.12.3 or higher is required and was not found.
-
-    ...which in turn requires either a lot of Haskell, or RStudio:
-    http://r.789695.n4.nabble.com/Apply-rmarkdown-render-outside-the-RStudio-don-t-find-pandoc-td4696190.html
-    https://github.com/rstudio/rmarkdown/blob/master/PANDOC.md
--->
-
 ## Loading and preprocessing the data
 
 > Show any code that is needed to
@@ -125,10 +106,20 @@ are at least a couple of days where it would appear that the subject did not
 move at all.  (Though perhaps, charitabily, we can assume that the subject
 left their step-measuring device behind for a day.)
 
-*TODO better labels*
 
 ```r
-with(dailysummary, hist(steps,30,main = "Histogram of Steps per Day"))
+{
+    # histogram with normal distribution curve
+    # http://stackoverflow.com/questions/20078107/overlay-normal-curve-to-histogram-in-r
+    steps <- dailysummary %>% select(steps) %>% filter(!is.na(steps))
+    steps <- steps$steps
+    breaks <- 30
+    hist1 <- hist(steps, breaks=breaks, main="Histogram of Steps per Day") 
+    xfit <- seq(min(steps),max(steps),length=(breaks*3)) 
+    yfit <- dnorm(xfit, mean=mean(steps), sd=sd(steps)) 
+    yfit <- yfit * diff(hist1$mids[1:2]) * length(steps) 
+    lines(xfit, yfit, col="black", lwd=2)
+}
 ```
 
 ![plot of chunk dailysummary_hist](figure/dailysummary_hist-1.png) 
@@ -141,11 +132,12 @@ meandaily_steps   <- mean(dailysummary$steps, na.rm = TRUE)
 mediandaily_steps <- median(dailysummary$steps, na.rm = TRUE)
 ```
 
-The mean of the total steps per day is 10766.19, and the median is
-10765.
+**The mean of the total steps per day is 10766.19, and the median is
+10765.**
 
 [^hist]: I tend to prefer ggplot2 graphs, but the base plot system seems to
 have the cleanest histograms, at least by default.
+
 
 &nbsp;  <!-- I need more space here than markdown will give me by default! -->
 
@@ -164,14 +156,13 @@ table, creating the time series plot is easy.
 intervalsummary <- activity %>%
                     group_by(interval) %>%
                     summarize(meansteps = mean(steps, na.rm = TRUE), medsteps = median(steps, na.rm = TRUE))
-# with(intervalsummary, plot(interval, steps, type = "l"))
 
 qplot(interval, meansteps, geom = "line", data = intervalsummary)
 ```
 
 ![plot of chunk intervalsummary](figure/intervalsummary-1.png) 
 
-The following code shows us that the individual averages the most steps during the interval corresponding to 8:35 in the morning.
+The following code shows us that the individual averages the most steps during the interval corresponding to 8:35 in the morning. (**maximum number of steps, on average, at interval == 815**)
 
 
 ```r
@@ -189,6 +180,7 @@ filter(intervalsummary, meansteps == max(meansteps))
 
 
 ## Imputing missing values
+
 > Note that there are a number of days/intervals where there are missing values (coded as NA). The presence of missing days may introduce bias into some calculations or summaries of the data.
 >
 > 1. Calculate and report the total number of missing values in the dataset (i.e. the total number of rows with NAs)
@@ -204,7 +196,7 @@ missing <- nrow(filter(activity, is.na(steps)))
 missingpercentage <- format((missing / nrow(activity)) * 100, digits = 4)
 ```
 
-As calculated from the previous code, there are 2304 rows missing from the table, representing 13.11% of the total rows.  We'll notice later that the dates either have no intervals with `NA` values, or all intervals have `NA` values.  So if we divide the number of missing rows by 288 (24 hours x 60 minutes / 5 minute intervals) we know that we are missing exactly 8 days worth of data.  This might bias our calculations or summaries if the missing days are unduly skewed towards the weekend or weekday.  A quick look at that here:
+As calculated from the previous code, there are **2304 step values missing from the dataset**, representing 13.11% of the total rows.  We'll notice later that the dates either have no intervals with `NA` values, or all intervals have `NA` values.  So if we divide the number of missing rows by 288 (24 hours x 60 minutes / 5 minute intervals) we know that we are missing exactly 8 days worth of data.  This might bias our calculations or summaries if the missing days are unduly skewed towards the weekend or weekday.  A quick look at that here:
 
 
 ```r
@@ -219,93 +211,81 @@ activity %>% filter(is.na(steps)) %>% select(date) %>% unique %>% as.vector %>% 
 
 We can see that 6/8 of our missing data are in the range Monday to Friday.  This is exactly the proportion of week days we'd expect for 8 missing days -- five-sevenths times eight is 5.71.
 
-#### Divising a strategy for filling in the missing values
 
-The easiest & most reasonable strategy, to my mind, is to fill any missing
-interval with the mean for the appropriate 5-minute interval.  However, it
-takes a bit of the fun out of divising if that strategy is drectly in the
-question.  A second-order approximation would combine the two suggestions,
-using any data available for a day with missing values to help compute an
-appropriate in-fill value.
+#### Divising a NEW strategy for filling in the missing values
 
-Unfortunately, as the following code snippet shows, the missing values in this
-data set span entire dates at a time -- there are no dates with only partial
-missing values.
+My first-pass strategy was to fill in any missing interval with the value of
+the average number of steps for that interval across the data set.  This
+resulted in negligible change to the data set with regard to mean and median,
+but made the central spike in the histogram even higher.  The histogram
+resembles a normal distribution, so I'd like to find a strategy that keeps the
+histogram reasonably normal, without significantly altering the mean & median
+values.[^missingvalues]
 
+To do this, I'll first create seperate interval step profiles for the weekend and the weekday, and then when I'm filling in the missing intervals, I'll use the appropriate day type.  I'll also add the standard distribution to these tables, so that I can use the `rnorm()` function to compute a replacement value, instead of just using the mean.
 
-```r
-missingdata_by_date <- activity %>%
-                        transform(na = is.na(steps)) %>%
-                        group_by(date) %>%
-                        summarize(NAs = sum(na))
+I thought about using the days surrounding the missing day to bias the missing data calculations, but there seems to be a lot of variance in day-to-day mean step values, so I won't bother.  (See the graph in the *Notes* section)
 
-missingdata_table <- table(missingdata_by_date$NAs)
-# make the results a little clearer
-names(missingdata_table) <- c("Days missing 0 values", "Days missing 288 values")
-missingdata_table
-```
-
-```
-##   Days missing 0 values Days missing 288 values 
-##                      53                       8
-```
-
-So we don't have any indication from the date itself as to the level of
-activity.  Any intelligent attempt to fill in the values for the day would
-have to base variance from patterns based on day of the week, day of the
-month, surrounding days activity, etc.
-
-As I haven't got weeks to spend on this assignment, I'll just fill in any NA
-value for a given interval with the median number of steps for that interval
-as measured across the entire data set.  Still, let's make sure that adding up
-all the median-interval-step-values doesn't result in a daily step total that
-varies from the average step value for a day.
-
-*TODO nicer output*
 
 ```r
-intervalsmean_sum = sum(intervalsummary$meansteps)
-intervalsmedian_sum = sum(intervalsummary$medsteps)
-mediandaily_steps - intervalsmedian_sum
+daytype <- function(date) {
+    dayname <- weekdays(date)
+    if (dayname == "Saturday") { "weekend" }
+    else if (dayname == "Sunday") { "weekend" }
+    else { "weekday" }
+}
+
+# update intervalsummary to include daytype -- we don't include median steps
+# this time around.  i thought at first  that it might be useful to use in the
+# interpolation strategy, but it is not.  i will still include the weekday
+# column in case I go back later and make imputation specific to the day of
+# the week.
+intervalsummary <- activity %>%
+                    filter(!is.na(steps)) %>%
+                    mutate(weekday = weekdays(date),
+                           daytype = vapply(date, daytype, "")) %>%
+                    group_by(interval,daytype) %>%
+                    summarize(meansteps = mean(steps),
+			      sdsteps = sd(steps),
+			      min=min(steps),
+			      max=max(steps))
 ```
 
-```
-## [1] 9624
-```
-
-```r
-mediandaily_steps - intervalsmean_sum
-```
-
-```
-## [1] -1.2
-```
-
-Clearly I don't want to use the median value of the steps across all values of
-interval X.  I'll use the average value, but also `round()` the average, as a
-fractional number of steps doesn't make much sense. 
 
 #### Create a new data set with the missing data filled in
 
-So here we create a short
-function to replace any NA values -- it requires the steps value and the
-interval value as input.  We then use `mapply()` to pass the steps and
-interval values to this function in order to build ourselves a new steps
-column that imputes missing values.  Finally, we use data.frame and tbl_df to
-re-assemble an activity table in dplyr data frame format.
+So here we create a short function to replace any NA values -- it requires the
+steps, the date, and the interval values as input.  We then use `mapply()` to
+pass the steps, date, and interval to this function in order to build
+ourselves a new steps column that imputes missing values.  Finally, we use
+data.frame and tbl_df to re-assemble an activity table in dplyr data frame
+format.
 
 
 ```r
-complete_steps <- function(steps, interval) {
+set.seed(1001)
+
+complete_steps <- function(steps, date, interval) {
     newsteps <- steps
+    daytype <- daytype(date)
     if (is.na(steps)) {
-        newsteps <- round(intervalsummary[intervalsummary$interval==interval,]$meansteps)    
+        is_row <- intervalsummary[(intervalsummary$interval == interval) &
+				  (intervalsummary$daytype == daytype),]
+        #print(is_row)
+        newsteps <- round(rnorm(1, mean=is_row$meansteps, sd=is_row$sdsteps))
+        # don't let the steps values go below the min or above the max
+        if (newsteps > is_row$max) {
+            newsteps <- is_row$max
+        } else if (newsteps < is_row$min) {
+            newsteps <- is_row$min
+        }
+        #print(newsteps)
     }
     newsteps
 }
 
-newstepscol <- with(activity, mapply(complete_steps, steps, interval))
-newactivity <- tbl_df(data.frame(steps = newstepscol, date = activity$date, interval = activity$interval))
+newactivity <- activity %>%
+		mutate(steps = mapply(complete_steps, steps, date, interval))
 head(newactivity)
 ```
 
@@ -313,44 +293,40 @@ head(newactivity)
 ## Source: local data frame [6 x 3]
 ## 
 ##   steps       date interval
-## 1     2 2012-10-01        0
+## 1    23 2012-10-01        0
 ## 2     0 2012-10-01        5
 ## 3     0 2012-10-01       10
 ## 4     0 2012-10-01       15
 ## 5     0 2012-10-01       20
-## 6     2 2012-10-01       25
+## 6     1 2012-10-01       25
 ```
+
 
 #### Histogram, mean, median, and discussion of new data set
 
 Now we make a histogram, and compute the mean and median of the new set.  I
-don't expect the mean & median to change, though perhaps the histogram will
-change slightly, increasing the peak at the middle.
+don't expect the mean & median to change, and I hope the histogram will not change much either.
 
 We'll put the new and old mean & median values into a table.  Because it's no
 fun to learn stuff on the slides and not use ALL of it!
 
-*TODO lattice plot, less squished*
-
-*TODO spacing between xtable and the text*
-
 
 ```r
 ndailysummary <- newactivity %>%
-		 group_by(date) %>%
+    	 group_by(date) %>%
 		 summarize(steps = sum(steps))
 
 with(ndailysummary, hist(steps,30))
 ```
 
-![plot of chunk interpolate1_effects](figure/interpolate1_effects-1.png) 
+![plot of chunk impute2_effects](figure/impute2_effects-1.png) 
 
 ```r
 nmeandaily_steps   <- mean(ndailysummary$steps, na.rm = TRUE)
 nmediandaily_steps <- median(ndailysummary$steps, na.rm = TRUE)
 
-results <- c(meandaily_steps, mediandaily_steps,
-	     nmeandaily_steps, nmediandaily_steps)
+results <- c(meandaily_steps, nmeandaily_steps,
+	     mediandaily_steps, nmediandaily_steps)
 dim(results) <- c(2,2)
 rownames(results) <- c("orig data", "infilled data")
 colnames(results) <- c("mean", "median")
@@ -358,20 +334,23 @@ print(xtable(results, center=c("r","r")), type = "html", html.table.attributes="
 ```
 
 <!-- html table generated in R 3.1.2 by xtable 1.7-4 package -->
-<!-- Sun Mar 15 15:03:37 2015 -->
+<!-- Mon Mar 16 00:24:27 2015 -->
 <table border=0>
 <tr> <th>  </th> <th> mean </th> <th> median </th>  </tr>
-  <tr> <td align="right"> orig data </td> <td align="right"> 10766.19 </td> <td align="right"> 10765.64 </td> </tr>
-  <tr> <td align="right"> infilled data </td> <td align="right"> 10765.00 </td> <td align="right"> 10762.00 </td> </tr>
+  <tr> <td align="right"> orig data </td> <td align="right"> 10766.19 </td> <td align="right"> 10765.00 </td> </tr>
+  <tr> <td align="right"> infilled data </td> <td align="right"> 11394.25 </td> <td align="right"> 11458.00 </td> </tr>
    </table>
+<br>
 
-We can see that *these values differ* **only slightly** *from the estimates from the first part of the assignment.*  However, we can see from the histogram that my method of imputing missing data greatly skews the histogram, making it appear that the individual walks *exactly* the average number of steps per day much more often than they probably do in relality.
+We can see that **the mean and median have both increased about 6%** above the values for the unaltered data set.
+I suspect that there may be an issue with my usage of `rnorm()` in my imputation strategy, but I can't see it, and the submission deadline is in 20 minutes.  I'm still reasonably convinced that this method is better than using exactly the mean values.  It's more interesting anyway.
 
-However, this method *does not alter the estimate of the total number of daily steps*.  The original data set contains 61 days worth of data, but the data for 8 days is missing.  Therefore, our early calculations show that the average daily number of steps is 10766.19 over 53 days (for a total of 570608 steps).  Our imputation changes the average only slightly to 10765.64 per day over 61 days (for a total of 656704).  While the totals are different, this is only because there are an additional 8 days worth of data.
+The histogram reflects this same shift -- no frequencies on the lower part of the histogram have increased, just frequencies in the second half.
+
+This method *does alter the estimates of the total number of daily steps*, as the mean value has now increased.
 
 One more set of graphs to show us the two histograms, side-by-side
 
-*TODO lattice plot -- or ggplot2*
 
 ```r
 par(mfrow = c(1,2),
@@ -380,12 +359,16 @@ par(mfrow = c(1,2),
 #  mar  -- margins bottom, left, top, right
 #  oma  -- outer margins bottom...
 
-with( dailysummary, hist(steps,30, ylim = c(0,20), main=""))
-with(ndailysummary, hist(steps,30, ylim = c(0,20), main=""))
+with( dailysummary, hist(steps,30, ylim = c(0,12), main=""))
+with(ndailysummary, hist(steps,30, ylim = c(0,12), main=""))
 mtext("Comparing histograms of original and imputed data", outer = TRUE)
 ```
 
-![plot of chunk interpolate1_figure2](figure/interpolate1_figure2-1.png) 
+![plot of chunk impute2_figure2](figure/impute2_figure2-1.png) 
+
+[^missingvalues]: See [MissingValues.md][MissingValues.md] for more rambling
+details on my earlier strategies.
+
 
 &nbsp;  <!-- I need more space here than markdown will give me by default! -->
 
@@ -402,7 +385,6 @@ I like using `%>%` for this, as we don't have to create a whole string of one-of
 
 
 ```r
-# table(sapply(weekdays(activity$date), function(d) { if ((d == "Saturday") || (d == "Sunday")) { "weekend" } else { "weekday"}}))
 daytype <- function(dayname) {
     if (dayname == "Saturday") { "weekend" }
     else if (dayname == "Sunday") { "weekend" }
@@ -411,22 +393,6 @@ daytype <- function(dayname) {
 
 newactivity <- newactivity %>%
                 mutate(weekday = weekdays(date), daytype = vapply(weekday, daytype, ""))
-
-table(newactivity$daytype)
-```
-
-```
-## 
-## weekday weekend 
-##   12960    4608
-```
-
-```r
-#newcolumn <- newactivity$date %>%
-#                weekdays() %>%
-#                sapply(function(d) { if ((d == "Saturday") || (d == "Sunday")) { "weekend" } else { "weekday"}})
-#
-#newactivity = data.frame(newactivity, newcolumn)
 ```
 
 Finally we create a table that averages the number of steps taken across each of the 5-minute intervals for daytype="weekday" and daytime="weekend".  We then use this to create the panel plot containing a time series plot of the 5-minute interval vs. average number of steps taken, for weekend days and for weekday days.
@@ -437,9 +403,9 @@ interval_dt_summary <- newactivity %>%
                         group_by(interval, daytype) %>%
                         summarize(meansteps = mean(steps))
 
-#        geom_smooth(method = "lm") +
 plot <- ggplot(interval_dt_summary, aes(interval, meansteps)) +
         geom_line() +
+        geom_smooth(method = "loess") +
         facet_grid(daytype ~ .) +
         labs(title = "Activity level over a day, Weekday vs. Weekend",
              y="Average number of Steps",
@@ -450,10 +416,14 @@ print(plot)
 
 ![plot of chunk splitweekday_plot](figure/splitweekday_plot-1.png) 
 
-## Notes
-I'd like to do a better imputation -- something that makes the histogram of the new dataset look more like the histogram of the original data set.  I think I can do this by combining an assumption that the activity of a missing day is relatively proportional to the activity of the days preceeding and following it, and by noticing that the original histogram corresponds to a bell curve.  The latter implies to me that I can use the Normal distribution functions to create random values for the missing intervals using rnorm().
+It is reasonably clear to see that there are indeed differences in activity pattern between the weekday, when activity starts off strongly at 5:40am, peaks at 8:35am, then tapers to a steady average 50 steps/interval until winding down just before 8:00pm -- and the weekend, where activity ramps more slowly to a peak at 9:15am, and holds at a steadier but more active pace until just around 9:00pm.
 
-Even more advanced, we could factor in weekday vs. weekend, or even see if there are different trends for each day of the week and use those.
+
+&nbsp;  <!-- I need more space here than markdown will give me by default! -->
+
+
+## Notes
+It would be interesting to see if there are different trends for each day of the week, and possibly use those in the imputation strategy.
 
 Here's a graph of the average steps per day across the whole data set, with the X axis markers breaking the data up into week-long chunks.
 
